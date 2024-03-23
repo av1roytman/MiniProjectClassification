@@ -1,0 +1,8 @@
+myenv/
+train_small/
+train/
+train-cropped/
+test/
+train_small.zip
+train.zip
+test.zip
