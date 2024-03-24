@@ -125,17 +125,24 @@ class VGG16(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
 
-from transformers import ViTForImageClassification
+from transformers import ViTForImageClassification, ViTConfig
 
 class CustomViTModel(nn.Module):
-    def __init__(self, num_classes):
-        super().__init__()
-        self.vit: ViTForImageClassification = ViTForImageClassification.from_pretrained('google/vit-base-patch16-224')
-        self.vit.classifier = nn.Linear(self.vit.config.hidden_size, num_classes)
+    def __init__(self, num_classes: int):
+        super(CustomViTModel, self).__init__()
+        # Load the configuration and modify it for the number of classes
+        config = ViTConfig.from_pretrained('google/vit-base-patch16-224', num_labels=num_classes)
+
+        # Ensure that we are explicitly getting a ViTForImageClassification instance
+        model = ViTForImageClassification.from_pretrained('google/vit-base-patch16-224', config=config, ignore_mismatched_sizes=True)
+        if not isinstance(model, ViTForImageClassification):
+            raise TypeError("The loaded model is not a ViTForImageClassification instance.")
+
+        self.vit = model
 
     def forward(self, x):
-        x = self.vit(x)
-        return x.logits
+        outputs = self.vit(x)
+        return outputs.logits  # Get the logits from the model outputs
 
 
 class FacesDataset(Dataset):
@@ -173,7 +180,7 @@ def main():
     transform = transforms.Compose([
         transforms.Resize((224, 224)),  # Resize images to the same dimensions
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
     ])
 
     dataset = FacesDataset(images_csv_file='train.csv', categories_csv_file='category.csv', root_dir='./train-cropped1', transform=transform)
@@ -201,7 +208,7 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
     # Check if GPU is available
-    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
     # Training loop
@@ -240,7 +247,7 @@ def main():
             print(f'Validation accuracy: {100 * correct / total:.2f}%')
 
     # Save the model
-    torch.save(model.state_dict(), 'model.pth')
+    torch.save(model.state_dict(), 'customViT-model.pth')
 
 
 if __name__ == '__main__':
