@@ -1,7 +1,14 @@
 myenv/
+model.pth
 train_small/
 train/
 train-cropped/
+train_small-cropped/
+train_small-cropped2/
+train_small-cropped4/
+train-cropped1/
+train-nofaces/
+train_small-nofaces/
 test/
 train_small.zip
 train.zip
