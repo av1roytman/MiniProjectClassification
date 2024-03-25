@@ -9,6 +9,8 @@ train_small-cropped4/
 train-cropped1/
 train-nofaces/
 train_small-nofaces/
+test-cropped/
+train-good/
 test/
 train_small.zip
 train.zip
