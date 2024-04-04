@@ -8,26 +8,68 @@ from PIL import Image
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+from torchvision import models
 
+class VGG16(nn.Module):
+    def __init__(self, num_classes=100):
+        super(VGG16, self).__init__()
 
-from transformers import ViTForImageClassification, ViTConfig
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 64, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2),
 
-class CustomViTModel(nn.Module):
-    def __init__(self, num_classes: int):
-        super(CustomViTModel, self).__init__()
-        # Load the configuration and modify it for the number of classes
-        config = ViTConfig.from_pretrained('google/vit-base-patch16-224', num_labels=num_classes)
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, 128, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2),
 
-        # Ensure that we are explicitly getting a ViTForImageClassification instance
-        model = ViTForImageClassification.from_pretrained('google/vit-base-patch16-224', config=config, ignore_mismatched_sizes=True)
-        if not isinstance(model, ViTForImageClassification):
-            raise TypeError("The loaded model is not a ViTForImageClassification instance.")
+            nn.Conv2d(128, 256, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2),
 
-        self.vit = model
+            nn.Conv2d(256, 512, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(512, 512, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(512, 512, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+
+            nn.Conv2d(512, 512, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(512, 512, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(512, 512, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2)
+        )
+
+        self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
+
+        self.classifier = nn.Sequential(
+            nn.Linear(512 * 7 * 7, 4096),
+            nn.ReLU(inplace=True),
+            nn.Dropout(),
+            nn.Linear(4096, 4096),
+            nn.ReLU(inplace=True),
+            nn.Dropout(),
+            nn.Linear(4096, num_classes)
+        )
 
     def forward(self, x):
-        outputs = self.vit(x)
-        return outputs.logits  # Get the logits from the model outputs
+        x = self.features(x)
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.classifier(x)
+        return x
 
 
 class FacesDataset(Dataset):
@@ -71,37 +113,23 @@ def main():
 
     dataset = FacesDataset(images_csv_file='train.csv', categories_csv_file='category.csv', root_dir='./train-good', transform=transform)
 
-    # Determine the lengths of the training and validation sets
-    train_len = int(0.9 * len(dataset))  # 80% of the dataset for training
-    val_len = len(dataset) - train_len  # 20% of the dataset for validation
-
-    # Split the dataset
-    train_dataset, val_dataset = random_split(dataset, [train_len, val_len])
-
     # Create data loaders
-    train_loader = DataLoader(dataset=train_dataset, batch_size=32, shuffle=True, num_workers = 8)
-    val_loader = DataLoader(dataset=val_dataset, batch_size=32, shuffle=False, num_workers = 8)
+    train_loader = DataLoader(dataset=dataset, batch_size=32, shuffle=True, num_workers = 8)
+    num_classes = 100
 
     # Initialize your model, criterion, and optimizer
-    # model = AdvancedCNN()
 
-    num_classes = 100
-    # model = VGG16(num_classes=num_classes)
-
-    model = CustomViTModel(num_classes=num_classes)
-
-    # Load the model from .pth file
-    # model.load_state_dict(torch.load('customViT-model-attempt4.pth'))
+    model = VGG16(num_classes=num_classes)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
     # Check if GPU is available
-    device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
     # Training loop
-    num_epochs = 25  # or however many you'd like
+    num_epochs = 50  # or however many you'd like
 
     for epoch in range(num_epochs):
         model.train()
@@ -121,22 +149,8 @@ def main():
             if (i+1) % 100 == 0:
                 print(f'Epoch [{epoch+1}/{num_epochs}], Step [{i+1}/{len(train_loader)}], Loss: {loss.item():.4f}')
 
-        # Validation phase
-        model.eval()
-        with torch.no_grad():
-            correct = 0
-            total = 0
-            for images, labels in val_loader:
-                images, labels = images.to(device), labels.to(device)
-                outputs = model(images)
-                _, predicted = torch.max(outputs.data, 1)
-                total += labels.size(0)
-                correct += (predicted == labels).sum().item()
-
-            print(f'Validation accuracy: {100 * correct / total:.2f}%')
-
     # Save the model
-    torch.save(model.state_dict(), 'customViT-model-attempt6.pth')
+    torch.save(model.state_dict(), 'VGG16-custom-attempt#1.pth')
 
 
 if __name__ == '__main__':

@@ -14,4 +14,7 @@ train-good/
 test/
 train_small.zip
 train.zip
+*.pth
+train-good2/
+train-good3/
 test.zip

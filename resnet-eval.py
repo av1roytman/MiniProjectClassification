@@ -8,23 +8,8 @@ from PIL import Image
 import os
 from torch.utils.data import Dataset
 from model import AdvancedCNN
-
-class CustomViTModel(nn.Module):
-    def __init__(self, num_classes: int):
-        super(CustomViTModel, self).__init__()
-        # Load the configuration and modify it for the number of classes
-        config = ViTConfig.from_pretrained('google/vit-base-patch16-224', num_labels=num_classes)
-
-        # Ensure that we are explicitly getting a ViTForImageClassification instance
-        model = ViTForImageClassification.from_pretrained('google/vit-base-patch16-224', config=config, ignore_mismatched_sizes=True)
-        if not isinstance(model, ViTForImageClassification):
-            raise TypeError("The loaded model is not a ViTForImageClassification instance.")
-
-        self.vit = model
-
-    def forward(self, x):
-        outputs = self.vit(x)
-        return outputs.logits  # Get the logits from the model outputs
+from torchvision import models
+from torchvision.models import ResNet18_Weights
 
 class FacesDataset(Dataset):
     def __init__(self, root_dir, transform=None):
@@ -60,15 +45,14 @@ def main():
     test_dataset = FacesDataset(root_dir='./test-cropped', transform=transform)
     test_loader = DataLoader(dataset=test_dataset, batch_size=32, shuffle=False)
 
-    device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
-
     # Assuming you have a PyTorch model
-    model = CustomViTModel(num_classes=100)
-
-    model = model.to(device)
-
+    model = models.resnet18(weights=ResNet18_Weights.DEFAULT)
     # Load the model from .pth file
-    model.load_state_dict(torch.load('customViT-model-attempt7-pretrainfromattempt5.pth'))
+
+    num_ftrs = model.fc.in_features
+    model.fc = nn.Linear(num_ftrs, 100)  # Assuming 100 classes (celebrities)
+
+    model.load_state_dict(torch.load('resnet18-attempt4.pth'))
 
     # model = AdvancedCNN()
     # model.load_state_dict(torch.load('model.pth'))
@@ -85,7 +69,6 @@ def main():
     # Iterate over the test data and generate predictions
     with torch.no_grad():
         for inputs, file_names in test_loader:
-            inputs = inputs.to(device)
             outputs = model(inputs)
             _, preds = torch.max(outputs, 1)
             predictions.extend(preds.tolist())
@@ -99,7 +82,7 @@ def main():
         'Id': filenames,
         'Category': predictions
     })
-    df.to_csv('predictions-pretrainfrom5.csv', index=False)
+    df.to_csv('predictions-resnet-2-sets.csv', index=False)
 
 if __name__ == '__main__':
     main()

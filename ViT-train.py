@@ -8,6 +8,7 @@ from PIL import Image
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+import re
 
 
 from transformers import ViTForImageClassification, ViTConfig
@@ -31,26 +32,35 @@ class CustomViTModel(nn.Module):
 
 
 class FacesDataset(Dataset):
-    def __init__(self, images_csv_file, categories_csv_file, root_dir, transform=None):
+    def __init__(self, images_csv_file, categories_csv_file, root_dirs, transform=None):
         self.image_annotations = pd.read_csv(images_csv_file)
         self.categories = pd.read_csv(categories_csv_file)
-        self.root_dir = root_dir
+        self.root_dirs = root_dirs  # This is now a list of directories
         self.transform = transform
 
     def __len__(self):
-        return len(os.listdir(self.root_dir))
+        total = 0
+        for dir in self.root_dirs:
+            total += len(os.listdir(dir))
+        return total
 
     def __getitem__(self, index):
         # Extract number from 123.jpg
-        file_name = os.listdir(self.root_dir)[index]
-        original_image_index = file_name.split('.')[0]
+        root_dir = self.root_dirs[index % len(self.root_dirs)]
+    
+        # Get the list of files in the directory
+        files = os.listdir(root_dir)
+        
+        # Choose the file based on the index
+        file_name = files[index % len(files)]
+
+        original_image_index = re.split('_|\.', file_name)[0]
         
         name = self.image_annotations.iloc[int(original_image_index)]['Category']
         label = self.categories.loc[self.categories['Category'] == name].index[0]
 
-
         # Load the image
-        img_path = os.path.join(self.root_dir, str(file_name))
+        img_path = os.path.join(self.root_dirs[index % len(self.root_dirs)], str(file_name))
         image = Image.open(img_path)
         
         if self.transform:
@@ -69,74 +79,61 @@ def main():
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
     ])
 
-    dataset = FacesDataset(images_csv_file='train.csv', categories_csv_file='category.csv', root_dir='./train-good', transform=transform)
+    dataset = FacesDataset(images_csv_file='train.csv', categories_csv_file='category.csv', root_dirs=['./train-cropped1', './train-good', './train-good2', './train-good3'], transform=transform)
 
-    # Determine the lengths of the training and validation sets
-    train_len = int(0.9 * len(dataset))  # 80% of the dataset for training
-    val_len = len(dataset) - train_len  # 20% of the dataset for validation
 
-    # Split the dataset
-    train_dataset, val_dataset = random_split(dataset, [train_len, val_len])
-
-    # Create data loaders
-    train_loader = DataLoader(dataset=train_dataset, batch_size=32, shuffle=True, num_workers = 8)
-    val_loader = DataLoader(dataset=val_dataset, batch_size=32, shuffle=False, num_workers = 8)
-
-    # Initialize your model, criterion, and optimizer
-    # model = AdvancedCNN()
+    train_loader = DataLoader(dataset=dataset, batch_size=32, shuffle=True, num_workers = 8)
 
     num_classes = 100
-    # model = VGG16(num_classes=num_classes)
 
     model = CustomViTModel(num_classes=num_classes)
 
     # Load the model from .pth file
-    # model.load_state_dict(torch.load('customViT-model-attempt4.pth'))
+    model.load_state_dict(torch.load('customViT-model-attempt5.pth'))
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
     # Check if GPU is available
-    device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
     # Training loop
-    num_epochs = 25  # or however many you'd like
+    num_epochs = 15  # or however many you'd like
 
     for epoch in range(num_epochs):
         model.train()
-        for i, (images, labels) in enumerate(train_loader):
-            # Move tensors to the appropriate device
-            images, labels = images.to(device), labels.to(device)
-            
-            # Forward pass
-            outputs = model(images)
-            loss = criterion(outputs, labels)
+        running_loss = 0.0
+        correct_predictions = 0
 
-            # Backward and optimize
+        for i, (inputs, labels) in enumerate(train_loader):
+            inputs, labels = inputs.to(device), labels.to(device)
+
+            # Zero the parameter gradients
             optimizer.zero_grad()
+
+            # Forward pass
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            _, preds = torch.max(outputs, 1)
+
+            # Backward pass + optimize
             loss.backward()
             optimizer.step()
+
+            running_loss += loss.item() * inputs.size(0)
+            correct_predictions += torch.sum(preds == labels.data)
 
             if (i+1) % 100 == 0:
                 print(f'Epoch [{epoch+1}/{num_epochs}], Step [{i+1}/{len(train_loader)}], Loss: {loss.item():.4f}')
 
-        # Validation phase
-        model.eval()
-        with torch.no_grad():
-            correct = 0
-            total = 0
-            for images, labels in val_loader:
-                images, labels = images.to(device), labels.to(device)
-                outputs = model(images)
-                _, predicted = torch.max(outputs.data, 1)
-                total += labels.size(0)
-                correct += (predicted == labels).sum().item()
+        epoch_loss = running_loss / len(dataset)
+        epoch_acc = correct_predictions / len(dataset)
 
-            print(f'Validation accuracy: {100 * correct / total:.2f}%')
+        print(f'Epoch {epoch+1}/{num_epochs} - Loss: {epoch_loss:.4f} - Accuracy: {epoch_acc:.4f}')
 
     # Save the model
-    torch.save(model.state_dict(), 'customViT-model-attempt6.pth')
+    torch.save(model.state_dict(), 'customViT-model-attempt7-pretrainfromattempt5.pth')
 
 
 if __name__ == '__main__':

@@ -29,6 +29,8 @@ class AdvancedCNN(nn.Module):
         self.bn3 = nn.BatchNorm2d(256)
         self.dropout3 = nn.Dropout(0.25)
 
+        self.sa = SelfAttention(256)
+
         # Fully Connected Layer 1
         self.fc1 = nn.Linear(256 * 28 * 28, 1024)
         self.fc_bn1 = nn.BatchNorm1d(1024)
@@ -58,6 +60,9 @@ class AdvancedCNN(nn.Module):
         x = F.max_pool2d(x, 2)
         x = self.dropout3(x)
 
+        # Self-Attention
+        x = self.sa(x)
+
         # Flatten
         x = x.view(x.size(0), -1)
 
@@ -71,6 +76,33 @@ class AdvancedCNN(nn.Module):
         x = self.fc3(x)
 
         return x
+
+
+class SelfAttention(nn.Module):
+    def __init__(self, in_dim):
+        super(SelfAttention, self).__init__()
+        self.query_conv = nn.Conv2d(in_channels=in_dim, out_channels=in_dim // 8, kernel_size=1)
+        self.key_conv = nn.Conv2d(in_channels=in_dim, out_channels=in_dim // 8, kernel_size=1)
+        self.value_conv = nn.Conv2d(in_channels=in_dim, out_channels=in_dim, kernel_size=1)
+        self.gamma = nn.Parameter(torch.zeros(1))
+        self. out_conv = nn.Conv2d(in_channels=in_dim, out_channels=in_dim, kernel_size=1)
+
+        self.softmax = nn.Softmax(dim=-1)
+
+    def forward(self, x):
+        batch_size, C, height, width = x.size()
+        query = self.query_conv(x).view(batch_size, -1, height * width).permute(0, 2, 1) # (batch_size, height * width, C)
+        key = self.key_conv(x).view(batch_size, -1, height * width) # (batch_size, C, height * width)
+        value = self.value_conv(x).view(batch_size, -1, height * width) # (batch_size, C, height * width)
+
+        attention = torch.bmm(query, key) # (batch_size, height * width, height * width)
+        attention = self.softmax(attention) # (batch_size, height * width, height * width)
+
+        out = torch.bmm(value, attention.permute(0, 2, 1)) # (batch_size, C, height * width)
+        out = out.view(batch_size, C, height, width) # (batch_size, C, height, width)
+        out = self.out_conv(out) # (batch_size, C, height, width)
+
+        return self.gamma * out + x  # Skip connection
 
 
 class VGG16(nn.Module):
@@ -156,9 +188,9 @@ class FacesDataset(Dataset):
         return len(os.listdir(self.root_dir))
 
     def __getitem__(self, index):
-        # Extract the base file name (e.g., '0_face_0.jpg') and the original image index (e.g., '0' from '0_face_0.jpg')
+        # Extract number from 123.jpg
         file_name = os.listdir(self.root_dir)[index]
-        original_image_index = file_name.split('_')[0]
+        original_image_index = file_name.split('.')[0]
         
         name = self.image_annotations.iloc[int(original_image_index)]['Category']
         label = self.categories.loc[self.categories['Category'] == name].index[0]
@@ -179,11 +211,12 @@ def main():
     # Define transforms for data normalization and augmentation
     transform = transforms.Compose([
         transforms.Resize((224, 224)),  # Resize images to the same dimensions
+        transforms.RandomHorizontalFlip(),  # Data augmentation
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
     ])
 
-    dataset = FacesDataset(images_csv_file='train.csv', categories_csv_file='category.csv', root_dir='./train-cropped1', transform=transform)
+    dataset = FacesDataset(images_csv_file='train.csv', categories_csv_file='category.csv', root_dir='./train-good', transform=transform)
 
     # Determine the lengths of the training and validation sets
     train_len = int(0.9 * len(dataset))  # 80% of the dataset for training
@@ -197,22 +230,22 @@ def main():
     val_loader = DataLoader(dataset=val_dataset, batch_size=32, shuffle=False, num_workers = 8)
 
     # Initialize your model, criterion, and optimizer
-    # model = AdvancedCNN()
+    model = AdvancedCNN()
 
-    num_classes = 100
+    # num_classes = 100
     # model = VGG16(num_classes=num_classes)
 
-    model = CustomViTModel(num_classes=num_classes)
+    # model = CustomViTModel(num_classes=num_classes)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
     # Check if GPU is available
-    device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
     # Training loop
-    num_epochs = 15  # or however many you'd like
+    num_epochs = 30  # or however many you'd like
 
     for epoch in range(num_epochs):
         model.train()
@@ -247,7 +280,7 @@ def main():
             print(f'Validation accuracy: {100 * correct / total:.2f}%')
 
     # Save the model
-    torch.save(model.state_dict(), 'customViT-model.pth')
+    torch.save(model.state_dict(), 'CNN-with-SA.pth')
 
 
 if __name__ == '__main__':
